@@ -4,7 +4,7 @@ import { ApiError } from "../utils/api-error.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { emailVerificationMailgenContent, sendEmail } from "../utils/mail.js";
 
-const generateAccessAndrefreshToken = async (userId) => {
+const generateAccessAndRefreshToken = async (userId) => {
   try {
     const user = await User.findById(userId);
     const accessToken = user.generateAccessToken();
@@ -23,7 +23,6 @@ const generateAccessAndrefreshToken = async (userId) => {
 };
 
 const registerUser = asyncHandler(async (req, res) => {
-
   const { email, username, password, role } = req.body;
 
   const existedUser = await User.findOne({
@@ -78,25 +77,25 @@ const registerUser = asyncHandler(async (req, res) => {
 });
 
 const login = asyncHandler(async (req, res) => {
-  const { email, password, username } = req.body
-  
+  const { email, password, username } = req.body;
+
   if (!username || !email) {
-    throw new ApiError(400, "Username or email is required")
+    throw new ApiError(400, "Username or email is required");
   }
 
-  const user = await User.findOne({ email })
+  const user = await User.findOne({ email });
 
   if (!user) {
     throw new ApiError(400, "User doesn't exist");
   }
 
-  const isPasswordValid = await user.isPasswordCorrect(password)
+  const isPasswordValid = await user.isPasswordCorrect(password);
 
   if (!isPasswordValid) {
     throw new ApiError(400, "Invalid credentials");
   }
 
-  const { accesToken, refreshTokenawait } = generateAccessAndrefreshToken(user._id)
+  const { accessToken, refreshToken } = await generateAccessAndRefreshToken( user._id,);
 
   const loggedInUser = await User.findById(user._id).select(
     "-password -refreshToken -emailVerificationToken -emailVerificationExpiry",
@@ -104,8 +103,8 @@ const login = asyncHandler(async (req, res) => {
 
   const options = {
     httpOnly: true,
-    secure: true
-  }
+    secure: true,
+  };
 
   return res
     .status(200)
@@ -116,13 +115,12 @@ const login = asyncHandler(async (req, res) => {
         200,
         {
           user: loggedInUser,
-          accessToken,
-          refreshToken
+          accessToken: accessToken,
+          refreshToken: refreshToken,
         },
-        "User logged in succesfully"
-      )
-    )
-
-})
+        "User logged in succesfully",
+      ),
+    );
+});
 
 export { registerUser, login };
