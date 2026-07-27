@@ -1,6 +1,9 @@
 import { User } from "../models/user.models.js";
 import { Project } from "../models/project.models.js";
 import { ProjectMember } from "../models/projectmember.models.js";
+import { Task } from "../models/task.models.js";
+import { SubTask } from "../models/subtask.models.js";
+import { ProjectNote } from "../models/note.models.js";
 import { ApiResponse } from "../utils/api-response.js";
 import { ApiError } from "../utils/api-error.js";
 import { asyncHandler } from "../utils/async-handler.js";
@@ -17,26 +20,24 @@ const getProjects = asyncHandler(async (req, res) => {
     {
       $lookup: {
         from: "projects",
-        localField: "projects",
+        localField: "project",
         foreignField: "_id",
-        as: "projects",
+        as: "project",
         pipeline: [
           {
             $lookup: {
-              from: "projectMembers",
+              from: "projectmembers",
               localField: "_id",
-              foreignField: "projects",
-              as: "projectmembers",
+              foreignField: "project",
+              as: "members",
+            },
+          },
+          {
+            $addFields: {
+              members: { $size: "$members" },
             },
           },
         ],
-      },
-    },
-    {
-      $addFields: {
-        members: {
-          $size: "$projectmembers",
-        },
       },
     },
     {
@@ -126,9 +127,25 @@ const deleteProjects = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Project not found");
   }
 
+  // Find all tasks linked to this project
+  const tasks = await Task.find({ project: new mongoose.Types.ObjectId(projectId) });
+  const taskIds = tasks.map((t) => t._id);
+
+  // Cascade delete subtasks, tasks, project members, and project notes
+  await SubTask.deleteMany({ task: { $in: taskIds } });
+  await Task.deleteMany({ project: new mongoose.Types.ObjectId(projectId) });
+  await ProjectMember.deleteMany({ project: new mongoose.Types.ObjectId(projectId) });
+  await ProjectNote.deleteMany({ project: new mongoose.Types.ObjectId(projectId) });
+
   return res
     .status(200)
-    .json(new ApiResponse(200, project, "Project deleted successfully"));
+    .json(
+      new ApiResponse(
+        200,
+        project,
+        "Project and all associated tasks, subtasks, notes, and members deleted successfully",
+      ),
+    );
 });
 
 const addMembersToProject = asyncHandler(async (req, res) => {
@@ -141,7 +158,7 @@ const addMembersToProject = asyncHandler(async (req, res) => {
     throw new ApiError(404, "User does not exist");
   }
 
-  await ProjectMember.findByIdAndUpdate(
+  await ProjectMember.findOneAndUpdate(
     {
       user: new mongoose.Types.ObjectId(user._id),
       project: new mongoose.Types.ObjectId(projectId),
@@ -164,7 +181,7 @@ const addMembersToProject = asyncHandler(async (req, res) => {
 
 const getProjectMembers = asyncHandler(async (req, res) => {
   const { projectId } = req.params;
-  const project = await Project.findById(req.params);
+  const project = await Project.findById(projectId);
 
   if (!project) {
     throw new ApiError(404, "Project not found");
@@ -220,10 +237,10 @@ const getProjectMembers = asyncHandler(async (req, res) => {
 
 const updateMemberRole = asyncHandler(async (req, res) => {
   const { projectId, userId } = req.params;
-  const { newRole } = req.body;
+  const newRole = req.body.newRole || req.body.role;
 
-  if (!AvailableUserRoles.includes(newRole)) {
-    throw new ApiError(400, "Invalid Role");
+  if (!newRole || !AvailableUserRoles.includes(newRole)) {
+    throw new ApiError(400, "Invalid or missing role");
   }
 
   let projectMember = await ProjectMember.findOne({
@@ -275,6 +292,15 @@ const deleteMember = asyncHandler(async (req, res) => {
   if (!projectMember) {
     throw new ApiError(400, "Project member not found");
   }
+
+  // Unassign tasks assigned to this removed member in this project
+  await Task.updateMany(
+    {
+      project: new mongoose.Types.ObjectId(projectId),
+      assignedTo: new mongoose.Types.ObjectId(userId),
+    },
+    { $unset: { assignedTo: 1 } },
+  );
 
   return res
     .status(200)

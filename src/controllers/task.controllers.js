@@ -1,7 +1,8 @@
 import { User } from "../models/user.models.js";
 import { Project } from "../models/project.models.js";
+import { ProjectMember } from "../models/projectmember.models.js";
 import { Task } from "../models/task.models.js";
-import { SubTask } from "../models/subtask..models.js";
+import { SubTask } from "../models/subtask.models.js";
 import { ApiResponse } from "../utils/api-response.js";
 import { ApiError } from "../utils/api-error.js";
 import { asyncHandler } from "../utils/async-handler.js";
@@ -21,8 +22,8 @@ const getTasks = asyncHandler(async (req, res) => {
   }).populate("assignedTo", "avatar username fullName");
 
   return res
-    .status(201)
-    .json(new ApiResponse(201, tasks, "Task fetched successfully"));
+    .status(200)
+    .json(new ApiResponse(200, tasks, "Task fetched successfully"));
 });
 
 const createTask = asyncHandler(async (req, res) => {
@@ -34,11 +35,22 @@ const createTask = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Project not found ");
   }
 
+  if (assignedTo) {
+    const isMember = await ProjectMember.findOne({
+      project: new mongoose.Types.ObjectId(projectId),
+      user: new mongoose.Types.ObjectId(assignedTo),
+    });
+    if (!isMember) {
+      throw new ApiError(400, "Assigned user is not a member of this project");
+    }
+  }
+
   const files = req.files || [];
 
+  const serverUrl = process.env.SERVER_URL || `http://localhost:${process.env.PORT || 8000}`;
   const attachments = files.map((file) => {
     return {
-      url: `${process.env.SERVER_URL}/images/${file.originalname}`,
+      url: `${serverUrl}/images/${file.originalname}`,
       mimetype: file.mimetype,
       size: file.size,
     };
@@ -80,7 +92,7 @@ const getTaskById = asyncHandler(async (req, res) => {
           {
             _id: 1,
             username: 1,
-            fullName: 1,
+            fullname: 1,
             avatar: 1,
           },
         ],
@@ -104,7 +116,7 @@ const getTaskById = asyncHandler(async (req, res) => {
                   $project: {
                     _id: 1,
                     username: 1,
-                    fullName: 1,
+                    fullname: 1,
                     avatar: 1,
                   },
                 },
@@ -143,24 +155,46 @@ const updateTask = asyncHandler(async (req, res) => {
   const { taskId } = req.params;
   const { title, description, assignedTo, status } = req.body;
 
+  const updateFields = {};
+  if (title) updateFields.title = title;
+  if (description !== undefined) updateFields.description = description;
+  if (assignedTo !== undefined) {
+    if (assignedTo) {
+      const isMember = await ProjectMember.findOne({
+        project: new mongoose.Types.ObjectId(projectId),
+        user: new mongoose.Types.ObjectId(assignedTo),
+      });
+      if (!isMember) {
+        throw new ApiError(400, "Assigned user is not a member of this project");
+      }
+      updateFields.assignedTo = new mongoose.Types.ObjectId(assignedTo);
+    } else {
+      updateFields.assignedTo = null;
+    }
+  }
+  if (status) updateFields.status = status;
+
+  if (req.files && req.files.length > 0) {
+    const serverUrl = process.env.SERVER_URL || `http://localhost:${process.env.PORT || 8000}`;
+    const attachments = req.files.map((file) => ({
+      url: `${serverUrl}/images/${file.originalname}`,
+      mimetype: file.mimetype,
+      size: file.size,
+    }));
+    updateFields.attachment = attachments;
+  }
+
   const task = await Task.findByIdAndUpdate(
     taskId,
-    {
-      title: title,
-      description: description,
-      assignedTo: new mongoose.Types.ObjectId(assignedTo),
-      status: status,
-    },
-    {
-      new: true,
-    },
+    { $set: updateFields },
+    { new: true },
   );
 
   if (!task) {
-    return new ApiError(404, "Task not found");
+    throw new ApiError(404, "Task not found");
   }
 
-  res.status(200).json(new ApiResponse(200, task, "Task updated successfully"));
+  return res.status(200).json(new ApiResponse(200, task, "Task updated successfully"));
 });
 
 const deleteTask = asyncHandler(async (req, res) => {
@@ -171,21 +205,69 @@ const deleteTask = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Task not found");
   }
 
+  // Cascade delete all subtasks linked to this task
+  await SubTask.deleteMany({ task: new mongoose.Types.ObjectId(taskId) });
+
   return res
     .status(200)
-    .json(new ApiResponse(200, project, "Task deleted successfully"));
+    .json(new ApiResponse(200, task, "Task and related subtasks deleted successfully"));
 });
 
 const createSubTask = asyncHandler(async (req, res) => {
-  //chai
+  const { taskId } = req.params;
+  const { title } = req.body;
+
+  const task = await Task.findById(taskId);
+  if (!task) {
+    throw new ApiError(404, "Task not found");
+  }
+
+  const subTask = await SubTask.create({
+    title,
+    task: new mongoose.Types.ObjectId(taskId),
+    createdBy: new mongoose.Types.ObjectId(req.user._id),
+  });
+
+  return res
+    .status(201)
+    .json(new ApiResponse(201, subTask, "Subtask created successfully"));
 });
 
-const uodateSubTask = asyncHandler(async (req, res) => {
-  //chai
+const updateSubTask = asyncHandler(async (req, res) => {
+  const { subTaskId } = req.params;
+  const { title, isCompleted } = req.body;
+
+  const updateFields = {};
+  if (title !== undefined) updateFields.title = title;
+  if (isCompleted !== undefined) updateFields.isCompleted = isCompleted;
+
+  const subTask = await SubTask.findByIdAndUpdate(
+    subTaskId,
+    { $set: updateFields },
+    { new: true },
+  );
+
+  if (!subTask) {
+    throw new ApiError(404, "Subtask not found");
+  }
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, subTask, "Subtask updated successfully"));
 });
 
 const deleteSubTask = asyncHandler(async (req, res) => {
-  //chai
+  const { subTaskId } = req.params;
+
+  const subTask = await SubTask.findByIdAndDelete(subTaskId);
+
+  if (!subTask) {
+    throw new ApiError(404, "Subtask not found");
+  }
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, subTask, "Subtask deleted successfully"));
 });
 
 export {
@@ -196,5 +278,5 @@ export {
   getTasks,
   getTaskById,
   updateTask,
-  uodateSubTask,
+  updateSubTask,
 };

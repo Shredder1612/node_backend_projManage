@@ -1,6 +1,6 @@
-import mongoose, { mongo, Schema } from "mongoose";
+import mongoose, { Schema } from "mongoose";
 
-const C = new Schema(
+const subTaskSchema = new Schema(
   {
     title: {
       type: String,
@@ -25,4 +25,4 @@ const C = new Schema(
   { timestamps: true },
 );
 
-export const SubTask = mongoose.model("SubTask", taskSchema);
+export const SubTask = mongoose.model("SubTask", subTaskSchema);

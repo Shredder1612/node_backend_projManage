@@ -30,7 +30,7 @@ router
   .post(createProjectValidator(), validate, createProject);
 
 router
-  .route("/:project")
+  .route("/:projectId")
   .get(validatorProjectPermission(AvailableUserRoles), getProjectsById)
   .put(
     validatorProjectPermission([UserRolesEnum.ADMIN]),
@@ -42,7 +42,7 @@ router
 
 router
   .route("/:projectId/members")
-  .get(getProjectMembers)
+  .get(validatorProjectPermission(AvailableUserRoles), getProjectMembers)
   .post(
     validatorProjectPermission([UserRolesEnum.ADMIN]),
     addMemberToProjectValidator(),
